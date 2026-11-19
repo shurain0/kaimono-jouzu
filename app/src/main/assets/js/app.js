@@ -23,7 +23,7 @@ function renderMain() {
   if (fab) f.dataset.act = fab;
   // 下のタブ
   const t = today();
-  const pending = S.items.filter((x) => pendingCp(x, t)).length;
+  const pending = S.items.filter((x) => pendingOf(x, t)).length;
   const soon = occurrences(t, addDays(t, 14)).filter((o) => !giftForOcc(o.key) && !(S.plans[o.key] && S.plans[o.key].text)).length;
   const badges = { bought: pending, gift: soon };
   $('#nav').innerHTML = TABS.map((x) => `<button class="${x.v === UI.tab ? 'on' : ''}" data-act="tab" data-v="${x.v}">
@@ -42,11 +42,14 @@ document.addEventListener('chipchange', (e) => {
 function route(r) {
   if (!r) return;
   if (r.startsWith('share:')) { addFromShare(r.slice(6)); return; }
-  const [kind, a, b] = r.split(':');
+  const parts = r.split(':');
+  const kind = parts[0], a = parts[1], b = parts.slice(2).join(':');
   if (kind === 'rate') {
     closeAllSheets(); UI.tab = 'bought'; renderMain();
     const it = itemById(a);
-    if (it && it.ratings[b] && !it.ratings[b].skip) openItem(a); else openRate(a, b);
+    if (!it) { toast('見つかりませんでした'); return; }
+    if (b.startsWith('p:')) { openItem(a); openPurchase(a, b.slice(2)); return; }
+    if (it.ratings[b] && !it.ratings[b].skip) openItem(a); else openRate(a, b);
   } else if (kind === 'occ') {
     closeAllSheets(); UI.tab = 'gift'; UI.giftTab = 'plan'; renderMain();
     openOcc(r.slice(4));

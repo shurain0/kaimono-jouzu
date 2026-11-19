@@ -16,6 +16,11 @@ const CPS = [
   { k: 'm6', label: '半年後', short: '半年', months: 6 },
   { k: 'y1', label: '1年後', short: '1年', months: 12 },
 ];
+const CONS_DAYS = 7; // 消耗品は買ってから1週間後に1回だけ感想を聞く
+const KINDS = [
+  { v: '', label: '長く使うもの' },
+  { v: 'consumable', label: '消耗品' },
+];
 const SCORES = [
   { v: 1, face: '😞', label: '後悔' },
   { v: 2, face: '😕', label: 'いまいち' },
@@ -126,6 +131,7 @@ function migrate(d) {
     it.ratings = it.ratings || {};
     it.desire = it.desire || 2;
     it.status = it.status || 'wish';
+    if (it.kind === 'consumable') ensurePurchases(it);
   }
   // if (d.v < 2) { ...形式の変更... }
   d.v = SCHEMA;
@@ -166,14 +172,56 @@ function cpStates(it, t = today()) {
 }
 /** 今記録してほしいタイミング（日付が来ていて未記録のうち一番新しいもの） */
 function pendingCp(it, t = today()) {
-  if (it.status !== 'bought' || !it.boughtAt) return null;
+  if (it.status !== 'bought' || !it.boughtAt || isCons(it)) return null;
   const st = cpStates(it, t);
   let last = null;
   for (const s of st) if (s.due <= t) last = s;
   return last && last.state === 'due' ? last : null;
 }
+// ---------- 消耗品（購入のたびに1回だけ感想・リピートを積み重ねる） ----------
+const isCons = (it) => it.kind === 'consumable';
+/** 消耗品の購入履歴を用意する（最初の購入は boughtAt / paid から作る） */
+function ensurePurchases(it) {
+  if (!Array.isArray(it.purchases)) it.purchases = [];
+  if (!it.purchases.length && it.boughtAt) it.purchases.push({ id: uid(), at: it.boughtAt, paid: it.paid == null ? null : it.paid });
+  return it.purchases;
+}
+/** 購入履歴（古い順）。最初の購入日を boughtAt にそろえる */
+function purchasesOf(it) {
+  const ps = ensurePurchases(it).slice().sort((a, b) => a.at.localeCompare(b.at));
+  if (ps.length) { it.boughtAt = ps[0].at; it.paid = ps[0].paid; }
+  return ps;
+}
+const totalPaid = (it) => (isCons(it) ? purchasesOf(it).reduce((s, p) => s + (p.paid || 0), 0) : it.paid || 0);
+/** 平均の購入間隔（日）。2回以上買っていれば */
+function repeatInterval(it) {
+  const ps = purchasesOf(it);
+  if (ps.length < 2) return null;
+  return Math.round(diffDays(ps[0].at, ps[ps.length - 1].at) / (ps.length - 1));
+}
+
+/** 今記録してほしいもの（記録待ちの一覧・通知から開くとき用） */
+function pendingOf(it, t = today()) {
+  if (it.status !== 'bought' || !it.boughtAt) return null;
+  if (isCons(it)) {
+    const ps = purchasesOf(it);
+    const last = ps[ps.length - 1];
+    if (last && !last.s && !last.skip && addDays(last.at, CONS_DAYS) <= t) {
+      return { k: 'p:' + last.id, text: ps.length > 1 ? `${ps.length}回目の<b>使ってみた感想</b>` : '<b>使ってみた感想</b>' };
+    }
+    return null;
+  }
+  const p = pendingCp(it, t);
+  return p ? { k: p.cp.k, text: `買ってから<b>${p.cp.label.replace('後', '')}</b>` } : null;
+}
+
 /** 最新の満足度 */
 function latestRating(it) {
+  if (isCons(it)) {
+    const ps = purchasesOf(it);
+    for (let i = ps.length - 1; i >= 0; i--) if (ps[i].s) return { cp: { k: 'p:' + ps[i].id, label: `${i + 1}回目` }, r: ps[i] };
+    return null;
+  }
   for (let i = CPS.length - 1; i >= 0; i--) { const r = it.ratings[CPS[i].k]; if (r && !r.skip && r.s) return { cp: CPS[i], r }; }
   return null;
 }
@@ -216,6 +264,20 @@ function buildSchedule() {
   const list = [];
   for (const it of S.items) {
     if (it.status !== 'bought' || !it.boughtAt) continue;
+    if (isCons(it)) {
+      const ps = purchasesOf(it);
+      const last = ps[ps.length - 1];
+      const due = last && addDays(last.at, CONS_DAYS);
+      if (last && !last.s && !last.skip && due >= from && due <= to) {
+        list.push({
+          key: `r:${it.id}:p:${last.id}`, at: due, ch: 'rate',
+          title: '感想を記録しよう',
+          text: `「${it.name}」を使ってみてどうですか？`,
+          route: `rate:${it.id}:p:${last.id}`,
+        });
+      }
+      continue;
+    }
     for (const s of cpStates(it, t)) {
       if (s.state === 'done' || s.state === 'skip') continue;
       if (s.due < from || s.due > to) continue;

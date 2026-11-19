@@ -56,7 +56,7 @@ function wishCard(it, t) {
 function viewBought() {
   const t = today();
   const bought = S.items.filter((x) => x.status === 'bought').sort((a, b) => (b.boughtAt || '').localeCompare(a.boughtAt || ''));
-  const pending = bought.filter((x) => pendingCp(x, t));
+  const pending = bought.filter((x) => pendingOf(x, t));
   const skipped = S.items.filter((x) => x.status === 'skipped');
 
   if (!bought.length) {
@@ -70,13 +70,13 @@ function viewBought() {
   if (pending.length) {
     html += `<h3 class="sec">記録待ち <span class="badge">${pending.length}</span></h3><div class="cards">`;
     html += pending.map((it) => {
-      const p = pendingCp(it, t);
+      const p = pendingOf(it, t);
       return `<div class="card pending">
         <button class="pending-main" data-act="openItem" data-id="${it.id}">
           <div class="name">${esc(it.name)}</div>
-          <div class="meta"><span>買ってから<b>${p.cp.label.replace('後', '')}</b></span></div>
+          <div class="meta"><span>${p.text}</span></div>
         </button>
-        <button class="btn primary sm" data-act="rate" data-id="${it.id}" data-k="${p.cp.k}">記録する</button>
+        <button class="btn primary sm" data-act="rate" data-id="${it.id}" data-k="${p.k}">記録する</button>
       </div>`;
     }).join('');
     html += `</div>`;
@@ -101,6 +101,20 @@ function dots(it, t) {
 
 function boughtCard(it, t) {
   const lr = latestRating(it);
+  if (isCons(it)) {
+    const ps = purchasesOf(it);
+    const last = ps[ps.length - 1];
+    const sc = ps.filter((p) => p.s).map((p) => p.s);
+    return `<button class="card item" data-act="openItem" data-id="${it.id}">
+      ${thumb(it)}
+      <div class="card-main">
+        <div class="name">${esc(it.name)}</div>
+        <div class="meta"><span class="tag">消耗品</span><span><b>${ps.length}</b>回購入</span><span>最後 ${fullD(last.at)}</span></div>
+        <div class="meta">${sc.length ? `<span>平均満足度 <b>${fmt1(avg(sc))}</b></span>` : '<span class="muted">感想まだ</span>'}${totalPaid(it) ? `<span class="price">計 ${yen(totalPaid(it))}</span>` : ''}</div>
+      </div>
+      <div class="face-lg">${lr ? scoreFace(lr.r.s) : ''}</div>
+    </button>`;
+  }
   return `<button class="card item" data-act="openItem" data-id="${it.id}">
     ${thumb(it)}
     <div class="card-main">
@@ -131,6 +145,8 @@ function itemForm(it, mode) {
       <label class="field"><span>商品名</span><textarea id="f-name" rows="2" placeholder="例）ワイヤレスイヤホン">${esc(it.name || '')}</textarea></label>
       <label class="field"><span>値段</span><input id="f-price" inputmode="numeric" placeholder="円" value="${it.price || ''}"></label>
       <div class="field"><span>どのくらい欲しい？</span>${chips('desire', DESIRES, it.desire || 2, 'desire-chips')}</div>
+      <div class="field"><span>種類</span>${chips('kind', KINDS, it.kind || '', 'desire-chips kind-chips')}
+        <small class="hint">消耗品は満足度の経過ではなく、買うたびに感想を1回だけ記録して、リピートを積み重ねていきます</small></div>
       <label class="field"><span>欲しい理由・使う場面（任意）</span><textarea id="f-note" rows="2" placeholder="あとで振り返るときのヒントになります">${esc(it.note || '')}</textarea></label>
       <label class="field"><span>欲しいと思った日</span><input id="f-added" type="date" value="${esc(it.addedAt || today())}"></label>
       ${isNew ? `<div class="field"><span>状態</span>${chips('status', [{ v: 'wish', label: 'まだ買ってない' }, { v: 'bought', label: 'もう買った' }], st || 'wish')}</div>` : ''}
@@ -194,8 +210,9 @@ actions.saveItem = (el) => {
   if (!isNew && it.desire !== desire && it.status === 'wish') {
     (it.desireLog = it.desireLog || []).push({ at: today(), from: it.desire, to: desire });
   }
+  const kind = chipVal(body, 'kind') || '';
   Object.assign(it, {
-    url: val(body, '#f-url'), name, price: num(val(body, '#f-price')), desire,
+    kind, url: val(body, '#f-url'), name, price: num(val(body, '#f-price')), desire,
     note: val(body, '#f-note'), addedAt: val(body, '#f-added') || today(), image: val(body, '#f-image'),
   });
   const status = isNew ? chipVal(body, 'status') || 'wish' : it.status;
@@ -205,6 +222,7 @@ actions.saveItem = (el) => {
     it.paid = num(val(body, '#f-paid'));
     if (it.boughtAt < it.addedAt) it.addedAt = it.boughtAt;
   }
+  if (it.status === 'bought' && isCons(it)) ensurePurchases(it);
   if (isNew) S.items.push(it);
   save(); closeSheet();
   if (isNew) { UI.tab = status === 'bought' ? 'bought' : 'wish'; toast(status === 'bought' ? '買ったものに登録しました' : '欲しいものに追加しました'); }
@@ -232,7 +250,8 @@ function openItem(id) {
   openSheet('item:' + id, () => {
     const it = itemById(id);
     if (!it) return '<p class="muted">削除されました</p>';
-    return it.status === 'bought' ? boughtDetail(it) : wishDetail(it);
+    if (it.status !== 'bought') return wishDetail(it);
+    return isCons(it) ? consDetail(it) : boughtDetail(it);
   });
 }
 
@@ -341,14 +360,15 @@ actions.confirmBuy = (el) => {
   it.boughtAt = val(body, '#b-date') || today();
   it.paid = num(val(body, '#b-paid'));
   if (it.addedAt && it.boughtAt < it.addedAt) it.addedAt = it.boughtAt;
+  if (isCons(it)) { it.purchases = []; ensurePurchases(it); }
   save(); closeSheet(); rerender();
-  const p = pendingCp(it);
-  toast(p ? '記録しました。満足度も記録してみましょう' : '記録しました。3日後に満足度をお聞きします');
+  const p = pendingOf(it);
+  toast(p ? '記録しました。満足度も記録してみましょう' : isCons(it) ? '記録しました。1週間後に感想をお聞きします' : '記録しました。3日後に満足度をお聞きします');
 };
 actions.unbuy = async (el) => {
   const it = itemById(el.dataset.id);
   if (!(await confirmBox('欲しいものリストに戻しますか？（満足度の記録は残ります）', '戻す'))) return;
-  it.status = 'wish'; delete it.boughtAt; save(); closeSheet(); rerender();
+  it.status = 'wish'; delete it.boughtAt; delete it.purchases; save(); closeSheet(); rerender();
 };
 actions.skipItem = (el) => {
   const it = itemById(el.dataset.id);
@@ -387,6 +407,7 @@ actions.openSkipped = () => {
 // ---------- 満足度の記録 ----------
 actions.rate = (el) => openRate(el.dataset.id, el.dataset.k);
 function openRate(id, k) {
+  if (k && k.startsWith('p:')) { openPurchase(id, k.slice(2)); return; }
   const it = itemById(id); const cp = CPS.find((c) => c.k === k);
   if (!it || !cp || it.status !== 'bought') { toast('見つかりませんでした'); return; }
   const r = it.ratings[k] && !it.ratings[k].skip ? it.ratings[k] : {};
@@ -416,4 +437,120 @@ actions.skipRate = (el) => {
   const it = itemById(el.dataset.id);
   it.ratings[el.dataset.k] = { skip: true, at: today() };
   save(); closeSheet(); rerender();
+};
+
+// ---------- 消耗品：詳細・リピート購入・購入ごとの感想 ----------
+function consDetail(it) {
+  const t = today();
+  const ps = purchasesOf(it);
+  const last = ps[ps.length - 1];
+  const sc = ps.filter((p) => p.s).map((p) => p.s);
+  const iv = repeatInterval(it);
+  const since = diffDays(last.at, t);
+  const rows = ps.map((p, i) => ({ p, i })).reverse().map(({ p, i }) => {
+    const sv = SCORES.find((x) => x.v === p.s);
+    const right = sv
+      ? `<span class="face">${sv.face}</span><span><b>${sv.label}</b>${p.note ? `<small>${esc(p.note)}</small>` : ''}</span>`
+      : p.skip ? `<span class="muted">記録なし</span>` : `<span class="btn primary sm">感想を記録</span>`;
+    return `<li class="tl ${sv ? 'done' : 'due'}">
+      <div class="tl-label"><b>${i + 1}回目</b><small>${fullD(p.at)}</small></div>
+      <div class="tl-body"><button class="tl-rate" data-act="openPurchase" data-id="${it.id}" data-p="${p.id}">${right}</button></div>
+      ${p.paid ? `<span class="tl-price">${yen(p.paid)}</span>` : ''}
+    </li>`;
+  }).join('');
+  return `${detailHead(it)}
+    <div class="facts">
+      <div><span>購入回数</span><b>${ps.length}回</b></div>
+      <div><span>平均満足度</span><b>${sc.length ? `${fmt1(avg(sc))} ${scoreFace(Math.round(avg(sc)))}` : '—'}</b></div>
+      <div><span>初めて買った日</span><b>${fullD(ps[0].at)}</b></div>
+      <div><span>合計金額</span><b>${totalPaid(it) ? yen(totalPaid(it)) : '—'}</b></div>
+      <div><span>前回の購入から</span><b>${since === 0 ? '今日' : spanText(since)}</b></div>
+      <div><span>買うペース</span><b>${iv ? `約${spanText(iv)}ごと` : '—'}</b></div>
+    </div>
+    ${it.note ? `<div class="note-box"><small>欲しかった理由</small>${esc(it.note)}</div>` : ''}
+    <button class="btn primary block lg" data-act="repeatBuy" data-id="${it.id}">${ICON.bag}リピート購入した</button>
+    <div class="sub-sec"><h4>購入の記録</h4>${consTrend(ps)}<ul class="timeline">${rows}</ul></div>
+    <div class="btn-row">
+      <button class="btn ghost" data-act="editItem" data-id="${it.id}">編集</button>
+      ${ps.length === 1 ? `<button class="btn ghost" data-act="unbuy" data-id="${it.id}">欲しいものに戻す</button>` : ''}
+    </div>
+    <button class="btn text danger block" data-act="deleteItem" data-id="${it.id}">削除</button>`;
+}
+
+/** 購入ごとの満足度の推移 */
+function consTrend(ps) {
+  const pts = ps.map((p, i) => ({ i, s: p.s })).filter((p) => p.s);
+  if (pts.length < 2) return '';
+  const n = Math.max(ps.length, 2);
+  const W = 300, H = 70, px = (i) => 12 + (i * (W - 24)) / (n - 1), py = (s) => H - 10 - ((s - 1) * (H - 20)) / 4;
+  const d = pts.map((p, j) => `${j ? 'L' : 'M'}${px(p.i).toFixed(1)},${py(p.s).toFixed(1)}`).join('');
+  return `<svg class="trend" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+    ${[1, 3, 5].map((s) => `<line x1="0" x2="${W}" y1="${py(s)}" y2="${py(s)}" class="grid"/>`).join('')}
+    <path d="${d}" class="line"/>
+    ${pts.map((p) => `<circle cx="${px(p.i)}" cy="${py(p.s)}" r="4" class="pt"/>`).join('')}
+  </svg>`;
+}
+
+function purchaseForm(it, p, mode) {
+  const ps = purchasesOf(it);
+  const idx = p.id ? ps.findIndex((x) => x.id === p.id) : ps.length;
+  const prev = ps.slice(0, idx).filter((x) => x.s).pop();
+  const isRepeat = mode === 'repeat';
+  return `
+    <p class="eyebrow">${isRepeat ? 'リピート購入' : `${idx + 1}回目の購入`}</p>
+    <h2 class="sheet-title">${esc(it.name)}</h2>
+    ${prev ? `<p class="muted">前回（${ps.indexOf(prev) + 1}回目）の感想は ${scoreFace(prev.s)} ${SCORES.find((x) => x.v === prev.s).label}</p>` : ''}
+    <div class="form">
+      <div class="row2">
+        <label class="field"><span>買った日</span><input id="pu-date" type="date" value="${esc(p.at || today())}"></label>
+        <label class="field"><span>金額</span><input id="pu-paid" inputmode="numeric" placeholder="円" value="${p.paid == null ? '' : p.paid}"></label>
+      </div>
+      <div class="field"><span>${isRepeat ? '満足度（あとで記録してもOK）' : '使ってみてどう？'}</span>
+        ${chips('score', SCORES.map((s) => ({ v: s.v, html: `<span class="f">${s.face}</span><span class="l">${s.label}</span>` })), p.s || '', 'faces toggle')}</div>
+      <label class="field"><span>ひとこと（任意）</span><textarea id="pu-note" rows="2" placeholder="前と比べてどうか・次も買うか など">${esc(p.note || '')}</textarea></label>
+      <button class="btn primary block" data-act="savePurchase" data-id="${it.id}" data-p="${p.id || ''}">${isRepeat ? 'リピートを記録する' : '保存する'}</button>
+      ${!isRepeat && !p.s ? `<button class="btn text block" data-act="skipPurchase" data-id="${it.id}" data-p="${p.id}">今回は感想を記録しない</button>` : ''}
+      ${!isRepeat && ps.length > 1 ? `<button class="btn text danger block" data-act="deletePurchase" data-id="${it.id}" data-p="${p.id}">この購入を削除</button>` : ''}
+    </div>`;
+}
+
+actions.repeatBuy = (el) => {
+  const it = itemById(el.dataset.id); if (!it) return;
+  const ps = purchasesOf(it);
+  const last = ps[ps.length - 1];
+  openSheet('purchase', () => purchaseForm(it, { at: today(), paid: last ? last.paid : null }, 'repeat'));
+};
+actions.openPurchase = (el) => openPurchase(el.dataset.id, el.dataset.p);
+function openPurchase(id, pid) {
+  const it = itemById(id);
+  const p = it && isCons(it) ? purchasesOf(it).find((x) => x.id === pid) : null;
+  if (!p) { if (it) openItem(id); else toast('見つかりませんでした'); return; }
+  openSheet('purchase', () => purchaseForm(it, p, 'edit'));
+}
+actions.savePurchase = (el) => {
+  const body = el.closest('.sheet-body');
+  const it = itemById(el.dataset.id);
+  ensurePurchases(it);
+  const s = Number(chipVal(body, 'score')) || null;
+  const data = { at: val(body, '#pu-date') || today(), paid: num(val(body, '#pu-paid')), s, note: val(body, '#pu-note') };
+  if (el.dataset.p) {
+    const p = it.purchases.find((x) => x.id === el.dataset.p);
+    Object.assign(p, data); if (s) { delete p.skip; p.ratedAt = today(); }
+  } else {
+    it.purchases.push(Object.assign({ id: uid() }, data, s ? { ratedAt: today() } : {}));
+  }
+  purchasesOf(it);
+  save(); closeSheet(); rerender();
+  toast(el.dataset.p ? '保存しました' : s ? `${it.purchases.length}回目を記録しました` : `${it.purchases.length}回目を記録しました。1週間後に感想をお聞きします`);
+};
+actions.skipPurchase = (el) => {
+  const it = itemById(el.dataset.id);
+  const p = it.purchases.find((x) => x.id === el.dataset.p);
+  p.skip = true; save(); closeSheet(); rerender();
+};
+actions.deletePurchase = async (el) => {
+  const it = itemById(el.dataset.id);
+  if (!(await confirmBox('この購入の記録を削除しますか？', '削除する', true))) return;
+  it.purchases = it.purchases.filter((x) => x.id !== el.dataset.p);
+  purchasesOf(it); save(); closeSheet(); rerender();
 };

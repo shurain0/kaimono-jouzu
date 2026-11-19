@@ -24,7 +24,7 @@ function viewStats() {
   const avgScore = avg(scores);
   const good = rated.filter((x) => x.lr.r.s >= 4).length;
   const savedMoney = skipped.reduce((s, x) => s + (x.price || 0), 0);
-  const spent = bought.reduce((s, x) => s + (x.paid || 0), 0);
+  const spent = bought.reduce((s, x) => s + totalPaid(x), 0);
 
   // 期間ごとの平均
   const curve = CPS.map((cp) => {
@@ -45,6 +45,10 @@ function viewStats() {
   const sleeping = bought.filter((it) => { const lr = latestRating(it); return lr && lr.r.use === 1; });
   const best = rated.filter((x) => x.lr.r.s >= 4).sort((a, b) => b.lr.r.s - a.lr.r.s || CPS.indexOf(b.lr.cp) - CPS.indexOf(a.lr.cp)).slice(0, 3);
   const worst = rated.filter((x) => x.lr.r.s <= 2).sort((a, b) => a.lr.r.s - b.lr.r.s).slice(0, 3);
+  const cons = bought.filter(isCons).map((it) => {
+    const ps = purchasesOf(it); const sc = ps.filter((p) => p.s).map((p) => p.s);
+    return { it, n: ps.length, a: avg(sc), iv: repeatInterval(it) };
+  }).sort((a, b) => b.n - a.n || (b.a || 0) - (a.a || 0));
 
   return `
     <div class="kpis">
@@ -74,14 +78,30 @@ function viewStats() {
       ${hbars(byWait)}
     </section>
 
+    ${cons.length ? `<section class="panel"><h3>消耗品のリピート</h3>
+      <p class="muted small">${cons.filter((c) => c.n >= 2).length}/${cons.length}件をリピート中</p>${consList(cons)}</section>` : ''}
+
     ${best.length ? `<section class="panel"><h3>いい買い物だったもの</h3>${miniList(best)}</section>` : ''}
     ${worst.length ? `<section class="panel"><h3>後悔したもの</h3>${miniList(worst)}</section>` : ''}
     ${sleeping.length ? `<section class="panel"><h3>あまり使っていないもの</h3>${miniList(sleeping.map((it) => ({ it, lr: latestRating(it) })))}</section>` : ''}
   `;
 }
 
+function consList(rows) {
+  return `<div class="mini-list">${rows.map((c) => `
+    <button class="mini" data-act="openItem" data-id="${c.it.id}">
+      <span class="face">${c.a ? scoreFace(Math.round(c.a)) : ''}</span>
+      <span class="mini-name">${esc(c.it.name)}</span>
+      <span class="muted small">${c.n}回${c.iv ? `・約${spanText(c.iv)}ごと` : ''}</span>
+    </button>`).join('')}</div>`;
+}
+
 function insights(byWait, byDesire, curve, sleeping) {
   const out = [];
+  const meh = S.items.filter((it) => it.status === 'bought' && isCons(it) && purchasesOf(it).length >= 3).filter((it) => {
+    const sc = purchasesOf(it).filter((p) => p.s).map((p) => p.s); return sc.length >= 2 && avg(sc) < 3;
+  });
+  if (meh.length) out.push(`「${esc(meh[0].name)}」${meh.length > 1 ? `など${meh.length}件` : ''}は満足度が低めなのにリピートしています。ほかの商品も試してみては？`);
   const [quick, , slow] = byWait;
   if (quick.n >= 2 && slow.n >= 2) {
     if (slow.a - quick.a >= 0.5) out.push(`1ヶ月以上考えてから買ったものは満足度 <b>${fmt1(slow.a)}</b>、即決は <b>${fmt1(quick.a)}</b>。じっくり寝かせたほうがうまくいっています。`);

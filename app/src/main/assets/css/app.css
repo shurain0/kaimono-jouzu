@@ -70,6 +70,10 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 .icon-btn svg { width: 22px; height: 22px; }
 
 #main { padding: 2px 16px 24px; }
+#main.swipe-l { animation: swipeL .22s ease-out; }
+#main.swipe-r { animation: swipeR .22s ease-out; }
+@keyframes swipeL { from { transform: translateX(28px); opacity: .4; } to { transform: none; opacity: 1; } }
+@keyframes swipeR { from { transform: translateX(-28px); opacity: .4; } to { transform: none; opacity: 1; } }
 .banner {
   display: flex; justify-content: space-between; align-items: center; gap: 8px;
   margin: 0 16px 10px; width: calc(100% - 32px); padding: 11px 14px;
@@ -183,6 +187,7 @@ button.card:active { background: var(--soft); }
 .chips.desire-chips { display: grid; grid-template-columns: repeat(3, 1fr); }
 .chips.desire-chips .chip { text-align: center; padding: 10px 4px; border-radius: 12px; }
 .idea-chips .chip { border-radius: 12px; text-align: left; }
+.chips.kind-chips { grid-template-columns: repeat(2, 1fr); }
 
 /* ---------- 下から出る画面 ---------- */
 .sheet-wrap { position: fixed; inset: 0; z-index: 20; }
@@ -195,6 +200,7 @@ button.card:active { background: var(--soft); }
 }
 .sheet-wrap.open .sheet-bg { opacity: 1; }
 .sheet-wrap.open .sheet { transform: none; }
+.sheet { overscroll-behavior: contain; }
 .grab { width: 38px; height: 4px; border-radius: 2px; background: var(--line); margin: 4px auto 14px; }
 .sheet-title { font-size: 20px; font-weight: 800; margin: 0 0 8px; line-height: 1.35; word-break: break-all; }
 .eyebrow { margin: 0 0 2px; font-size: 12.5px; font-weight: 700; color: var(--accent); letter-spacing: .04em; }
@@ -274,6 +280,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
 .tl-rate b { font-size: 14px; }
 .tl-rate em { font-style: normal; font-size: 12px; color: var(--ink2); margin-left: 8px; }
 .tl-rate small { display: block; font-size: 12.5px; color: var(--ink2); word-break: break-all; }
+.tl-price { flex: none; font-size: 12.5px; font-weight: 700; color: var(--ink2); font-variant-numeric: tabular-nums; }
 .tl-rate.skip { color: var(--muted); font-size: 13px; }
 .trend { width: 100%; height: 70px; margin-bottom: 4px; }
 .trend .grid, .chart .grid { stroke: var(--line); stroke-width: 1; }
