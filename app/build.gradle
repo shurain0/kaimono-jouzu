@@ -1,0 +1,47 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+// GitHub Actions の実行番号をそのままバージョン番号にする（毎回+1されるので上書き更新できる）
+def runNumber = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInteger()
+
+android {
+    namespace 'jp.shurain.kaimono'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'jp.shurain.kaimono'
+        minSdk 26
+        targetSdk 34
+        versionCode runNumber
+        versionName "1.0.${runNumber}"
+    }
+
+    // 毎回同じ鍵で署名 → アンインストールせずに上書きアップデートでき、データも残る
+    // ※この鍵ファイルを消したり作り直したりしないこと
+    signingConfigs {
+        fixed {
+            storeFile file('kaimono.keystore')
+            storePassword 'kaimonopass'
+            keyAlias 'kaimono'
+            keyPassword 'kaimonopass'
+        }
+    }
+    buildTypes {
+        debug { signingConfig signingConfigs.fixed }
+        release {
+            signingConfig signingConfigs.fixed
+            minifyEnabled false
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions { jvmTarget = '17' }
+    lint {
+        checkReleaseBuilds false
+        abortOnError false
+    }
+}
